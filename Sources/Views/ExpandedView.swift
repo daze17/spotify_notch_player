@@ -4,10 +4,12 @@ import SwiftUI
 /// or a hint when Spotify isn't available.
 struct ExpandedView: View {
     @ObservedObject var spotify: SpotifyController
+    @ObservedObject var queue: QueueController
+    let queueLayout: NotchGeometry.QueueLayout
     let geometry: NotchGeometry
 
     var body: some View {
-        let size = geometry.shapeSize(.expanded)
+        let size = geometry.shapeSize(.expanded(queueLayout))
 
         VStack(spacing: 0) {
             // Space hidden behind the physical camera housing.
@@ -17,6 +19,8 @@ struct ExpandedView: View {
                 .padding(.horizontal, 22)
                 .padding(.top, 10)
                 .padding(.bottom, 16)
+                .frame(height: NotchGeometry.playerHeight)
+            QueueView(queue: queue, layout: queueLayout, geometry: geometry)
         }
         .frame(width: size.width, height: size.height)
         .foregroundStyle(.white)
@@ -29,7 +33,7 @@ struct ExpandedView: View {
             HintView(symbol: "exclamationmark.circle", message: "Spotify isn't installed")
         case .notRunning:
             HintView(symbol: "moon.zzz", message: "Spotify isn't running",
-                     actionTitle: "Open Spotify", action: spotify.launchSpotify)
+                     actionTitle: "Open Spotify", action: spotify.openSpotify)
         case .ready, .permissionDenied:
             if let track = spotify.track {
                 player(track)
@@ -58,9 +62,12 @@ struct ExpandedView: View {
                 Spacer(minLength: 0)
                 EqualizerBars(isAnimating: spotify.isPlaying)
                     .frame(width: 18, height: 16)
+                ControlButton(symbol: "arrow.up.forward.app", size: 14, action: spotify.openSpotify)
+                    .help("Open Spotify")
             }
 
-            ProgressRow(position: spotify.position, duration: track.duration, isPlaying: spotify.isPlaying)
+            // Seeking needs AppleScript, so only when Automation access is granted.
+            ProgressRow(spotify: spotify, duration: track.duration, canSeek: spotify.status == .ready)
 
             if spotify.status == .permissionDenied {
                 permissionHint
@@ -109,37 +116,79 @@ private struct ControlButton: View {
     }
 }
 
-/// Display-only progress bar with elapsed/total times.
+/// Progress bar with elapsed/total times. Click or drag the bar to seek.
 private struct ProgressRow: View {
-    let position: TimeInterval
+    @ObservedObject var spotify: SpotifyController
     let duration: TimeInterval
-    let isPlaying: Bool
+    let canSeek: Bool
 
-    private var fraction: CGFloat {
-        guard duration > 0 else { return 0 }
-        return CGFloat(min(max(position / duration, 0), 1))
-    }
+    /// 0...1 while the user is dragging; the bar follows the pointer instead of playback.
+    @State private var scrubFraction: CGFloat?
+    @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(Self.format(position))
-                .frame(width: 34, alignment: .trailing)
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.2))
-                    Capsule().fill(Color.white)
-                        .frame(width: proxy.size.width * fraction)
-                        // Position arrives once a second; glide between samples
-                        // while playing instead of jumping.
-                        .animation(isPlaying ? .linear(duration: 1) : .default, value: fraction)
-                }
+        // Redraw ~10×/s while playing so the bar and time advance smoothly between
+        // the 1 s position polls. Paused or scrubbing, nothing needs to tick.
+        TimelineView(.animation(minimumInterval: 0.1, paused: !spotify.isPlaying || scrubFraction != nil)) { context in
+            let live = spotify.position(at: context.date)
+            let fraction = scrubFraction ?? fraction(of: live)
+            let shownTime = scrubFraction.map { Double($0) * duration } ?? live
+
+            HStack(spacing: 8) {
+                Text(Self.format(shownTime))
+                    .frame(width: 34, alignment: .trailing)
+                bar(fraction: fraction)
+                Text(Self.format(duration))
+                    .frame(width: 34, alignment: .leading)
             }
-            .frame(height: 4)
-            Text(Self.format(duration))
-                .frame(width: 34, alignment: .leading)
         }
         .font(.system(size: 10, weight: .medium).monospacedDigit())
         .foregroundStyle(.white.opacity(0.6))
+    }
+
+    private func bar(fraction: CGFloat) -> some View {
+        let isActive = canSeek && (isHovered || scrubFraction != nil)
+        let thickness: CGFloat = isActive ? 6 : 4
+
+        return GeometryReader { proxy in
+            let width = proxy.size.width
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.2))
+                    .frame(height: thickness)
+                Capsule().fill(Color.white)
+                    .frame(width: max(thickness, width * fraction), height: thickness)
+                if isActive {
+                    Circle().fill(Color.white)
+                        .frame(width: 11, height: 11)
+                        .offset(x: width * fraction - 5.5)
+                }
+            }
+            .frame(width: width, height: proxy.size.height)
+            // The visible bar is only 4 pt tall; make the whole row height clickable.
+            .contentShape(Rectangle())
+            // minimumDistance 0: a plain click counts too, not just a drag.
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in scrubFraction = clamp(value.location.x / width) }
+                    .onEnded { value in
+                        spotify.seek(to: Double(clamp(value.location.x / width)) * duration)
+                        scrubFraction = nil
+                    },
+                including: canSeek ? .all : .subviews
+            )
+        }
+        .frame(height: 14)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isActive)
+    }
+
+    private func fraction(of position: TimeInterval) -> CGFloat {
+        guard duration > 0 else { return 0 }
+        return clamp(CGFloat(position / duration))
+    }
+
+    private func clamp(_ value: CGFloat) -> CGFloat {
+        min(max(value, 0), 1)
     }
 
     static func format(_ seconds: TimeInterval) -> String {
@@ -170,13 +219,7 @@ private struct HintView: View {
                 .multilineTextAlignment(compact ? .leading : .center)
                 .fixedSize(horizontal: false, vertical: true)
             if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: .semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(Color.white.opacity(0.15)))
-                    .contentShape(Capsule())
+                PillButton(title: actionTitle, action: action)
             }
         }
     }

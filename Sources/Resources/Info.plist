@@ -26,6 +26,8 @@
 	<string>public.app-category.music</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>SpotifyClientID</key>
+	<string>$(SPOTIFY_CLIENT_ID)</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>NotchPlayer controls Spotify and reads the current track, artwork and playback position.</string>
 </dict>

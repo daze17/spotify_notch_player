@@ -7,10 +7,21 @@ import AppKit
 /// screen" is `frame.maxY`, not 0 as on the web.
 struct NotchGeometry: Equatable {
     enum State: Equatable {
-        case idle       // nothing playing: exactly the notch, so it's invisible
-        case collapsed  // notch + "wings" for artwork (left) and equalizer (right)
-        case expanded   // hovered: the full player
+        case idle                   // nothing playing: exactly the notch, so it's invisible
+        case collapsed              // notch + wings (artwork, equalizer) + title strip below
+        case expanded(QueueLayout)  // hovered: the full player, plus the queue section
     }
+
+    /// What the queue section at the bottom of the expanded player shows.
+    enum QueueLayout: Equatable {
+        case none    // no track, so no queue
+        case prompt  // one line: "Connect Spotify…" or setup hint
+        case list    // "Up next" header + rows
+    }
+
+    /// Rows visible at once; the queue scrolls when longer.
+    static let queueRows = 4
+    static let queueRowHeight: CGFloat = 36
 
     /// True on a MacBook with a camera housing. False → floating pill fallback.
     var hasNotch: Bool
@@ -43,11 +54,12 @@ struct NotchGeometry: Equatable {
         // below the menu bar of the primary display. `screens.first` is always the
         // one with the menu bar; `NSScreen.main` is whichever screen has key focus.
         guard let screen = NSScreen.screens.first else {
-            return NotchGeometry(hasNotch: false, notchSize: CGSize(width: 120, height: 28), centerX: 0, topY: 0)
+            return NotchGeometry(hasNotch: false, notchSize: CGSize(width: 160, height: 28), centerX: 0, topY: 0)
         }
         return NotchGeometry(
             hasNotch: false,
-            notchSize: CGSize(width: 120, height: 28),
+            // Wider than a real notch: without one, the title goes in the middle.
+            notchSize: CGSize(width: 160, height: 28),
             centerX: screen.frame.midX,
             topY: screen.visibleFrame.maxY - 6
         )
@@ -62,15 +74,31 @@ struct NotchGeometry: Equatable {
     /// physical notch, so content must start below it.
     var contentTopInset: CGFloat { hasNotch ? notchSize.height : 0 }
 
+    /// Height of the "Title — Artist" strip under the notch when collapsed. Without
+    /// a notch the title fits in the middle of the pill instead, so there's no strip.
+    var titleStripHeight: CGFloat { hasNotch ? 22 : 0 }
+
+    /// Height of the player part of the expanded view (below the notch inset).
+    static let playerHeight: CGFloat = 150
+
+    func queueHeight(_ layout: QueueLayout) -> CGFloat {
+        switch layout {
+        case .none: return 0
+        case .prompt: return 44
+        case .list: return 26 + CGFloat(Self.queueRows) * Self.queueRowHeight + 10
+        }
+    }
+
     func shapeSize(_ state: State) -> CGSize {
         switch state {
         case .idle:
             return notchSize
         case .collapsed:
-            return CGSize(width: notchSize.width + wingWidth * 2, height: notchSize.height)
-        case .expanded:
+            return CGSize(width: notchSize.width + wingWidth * 2, height: notchSize.height + titleStripHeight)
+        case .expanded(let queue):
             let collapsedWidth = notchSize.width + wingWidth * 2
-            return CGSize(width: max(collapsedWidth + 40, 380), height: contentTopInset + 150)
+            return CGSize(width: max(collapsedWidth + 40, 380),
+                          height: contentTopInset + Self.playerHeight + queueHeight(queue))
         }
     }
 
@@ -79,7 +107,8 @@ struct NotchGeometry: Equatable {
     func cornerRadii(_ state: State) -> (top: CGFloat, bottom: CGFloat) {
         let bottom: CGFloat
         switch state {
-        case .idle, .collapsed: bottom = hasNotch ? 10 : notchSize.height / 2
+        case .idle: bottom = hasNotch ? 10 : notchSize.height / 2
+        case .collapsed: bottom = hasNotch ? 14 : notchSize.height / 2
         case .expanded: bottom = 28
         }
         return (hasNotch ? 0 : bottom, bottom)
@@ -94,7 +123,7 @@ struct NotchGeometry: Equatable {
     /// The panel is always sized for the expanded state (plus slack so the spring's
     /// overshoot isn't clipped). The shape animates inside it; the panel never moves.
     var panelFrame: NSRect {
-        let expanded = shapeSize(.expanded)
+        let expanded = shapeSize(.expanded(.list))   // the largest state
         let size = CGSize(width: expanded.width + 40, height: expanded.height + 24)
         return NSRect(x: centerX - size.width / 2, y: topY - size.height, width: size.width, height: size.height)
     }

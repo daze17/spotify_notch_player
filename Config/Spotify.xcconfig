@@ -1,0 +1,9 @@
+// Spotify Web API Client ID, used to show the "Up next" queue.
+//
+// Don't put your ID here. Create Config/Local.xcconfig (git-ignored) containing:
+//   SPOTIFY_CLIENT_ID = your_client_id
+// See README → "Up next (queue)".
+SPOTIFY_CLIENT_ID =
+
+// `#include?` (with the ?) is optional: no error if the file doesn't exist.
+#include? "Local.xcconfig"

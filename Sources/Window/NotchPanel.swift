@@ -28,6 +28,9 @@ final class NotchPanel: NSPanel {
         // Start click-through; NotchPanelController turns clicks on while hovering.
         ignoresMouseEvents = true
         animationBehavior = .none
+        // Always dark: the panel is black regardless of the system appearance, so
+        // scrollers and context menus must use their light-on-dark variants.
+        appearance = NSAppearance(named: .darkAqua)
     }
 
     // Never take keyboard focus away from the user's frontmost window.
@@ -89,20 +92,25 @@ final class NotchPanelController {
     private var eventMonitors: [Any] = []
     private var collapseTask: Task<Void, Never>?
     private let spotify: SpotifyController
+    private let queue: QueueController
     private var cancellables = Set<AnyCancellable>()
 
-    init(spotify: SpotifyController) {
+    init(spotify: SpotifyController, queue: QueueController) {
         self.spotify = spotify
+        self.queue = queue
         let geometry = NotchGeometry.current()
         model = NotchViewModel(geometry: geometry)
         panel = NotchPanel(contentRect: geometry.panelFrame)
 
-        // Poll the playback position only while the expanded player is on screen.
+        // Poll the playback position and queue only while the expanded player is on screen.
         model.$isExpanded
-            .sink { [weak spotify] expanded in spotify?.isExpandedVisible = expanded }
+            .sink { [weak spotify, weak queue] expanded in
+                spotify?.isExpandedVisible = expanded
+                queue?.isVisible = expanded
+            }
             .store(in: &cancellables)
 
-        let hostingView = NotchHostingView(rootView: NotchView(model: model, spotify: spotify))
+        let hostingView = NotchHostingView(rootView: NotchView(model: model, spotify: spotify, queue: queue))
         // By default NSHostingView resizes its window to fit the SwiftUI content.
         // The panel's size is fixed by NotchGeometry, so opt out.
         hostingView.sizingOptions = []
@@ -153,8 +161,9 @@ final class NotchPanelController {
     }
 
     private var currentState: NotchGeometry.State {
-        // The hover target is the bare notch when idle, or the notch plus wings.
-        model.isExpanded ? .expanded : (spotify.isActive ? .collapsed : .idle)
+        // The hover target is the bare notch when idle, the notch plus wings and
+        // title strip when collapsed, or the whole player when expanded.
+        .current(isExpanded: model.isExpanded, spotify: spotify, queue: queue)
     }
 
     /// Compare the cursor with the visible shape and expand/collapse accordingly.
@@ -164,6 +173,11 @@ final class NotchPanelController {
         // which NSRect.contains treats as outside.
         let hotZone = model.geometry.shapeFrame(currentState).insetBy(dx: -2, dy: -2)
         let inside = hotZone.contains(NSEvent.mouseLocation)
+
+        // Mid-drag (e.g. scrubbing past the edge of the shape), keep the panel as
+        // it is until the button is released; the next mouse move re-evaluates.
+        let isDragging = NSEvent.pressedMouseButtons & 1 != 0
+        if !inside, isDragging, !panel.ignoresMouseEvents { return }
 
         panel.ignoresMouseEvents = !inside
         if inside {

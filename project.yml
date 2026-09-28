@@ -17,6 +17,9 @@ targets:
   NotchPlayer:
     type: application
     platform: macOS
+    configFiles:
+      Debug: Config/Spotify.xcconfig
+      Release: Config/Spotify.xcconfig
     sources:
       - path: Sources
     settings:

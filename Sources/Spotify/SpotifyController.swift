@@ -19,9 +19,36 @@ final class SpotifyController: NSObject, ObservableObject {
 
     @Published private(set) var status: Status = .notRunning
     @Published private(set) var track: SpotifyTrack?
-    @Published private(set) var isPlaying = false
-    @Published private(set) var position: TimeInterval = 0
+    @Published private(set) var isPlaying = false {
+        didSet {
+            guard isPlaying != oldValue else { return }
+            if oldValue {
+                // Pausing: freeze the position where the local clock got to.
+                position += Date().timeIntervalSince(positionSampledAt)
+            } else {
+                // Resuming: start counting from now, not from before the pause.
+                positionSampledAt = Date()
+            }
+        }
+    }
+    /// Last known position in seconds. Use `position(at:)` for a live value.
+    @Published private(set) var position: TimeInterval = 0 {
+        didSet { positionSampledAt = Date() }
+    }
+    /// When `position` was last set, so the UI can extrapolate between samples.
+    private var positionSampledAt = Date()
+    /// Bumped on every seek. Position reads started before a seek are discarded,
+    /// otherwise a slow poll could snap the bar back to the old spot.
+    private var seekGeneration = 0
     @Published private(set) var artwork: NSImage?
+
+    /// The playback position right now, extrapolated from the last sample while
+    /// playing. Lets the progress bar move smoothly between 1 s polls.
+    func position(at date: Date) -> TimeInterval {
+        guard isPlaying else { return position }
+        let live = position + date.timeIntervalSince(positionSampledAt)
+        return min(live, track?.duration ?? live)
+    }
 
     /// Something is playing right now, so the collapsed indicators should show.
     var isActive: Bool { track != nil && isPlaying }
@@ -38,8 +65,6 @@ final class SpotifyController: NSObject, ObservableObject {
     private let script = SpotifyScript()
     private let logger = Logger(subsystem: "com.bilguun.NotchPlayer", category: "Spotify")
     private var positionTimer: Timer?
-    private let artworkCache = NSCache<NSURL, NSImage>()
-    private var artworkTask: Task<Void, Never>?
 
     override init() {
         super.init()
@@ -70,9 +95,41 @@ final class SpotifyController: NSObject, ObservableObject {
     func nextTrack() { send(.next) }
     func previousTrack() { send(.previous) }
 
-    func launchSpotify() {
+    /// Jumps to `seconds` into the current track.
+    func seek(to seconds: TimeInterval) {
+        seekGeneration += 1
+        position = seconds   // optimistic: move the bar now, not after the round-trip
+        Task {
+            do {
+                try await script.seek(to: seconds)
+            } catch {
+                handle(error)
+            }
+        }
+    }
+
+    /// Skips `count` tracks forward (used to jump to an item in the queue).
+    func skipForward(count: Int) {
+        guard count > 0 else { return }
+        Task {
+            do {
+                try await script.skip(count: count)
+            } catch {
+                handle(error)
+            }
+        }
+    }
+
+    /// Launches Spotify, or brings its window to the front if it's already running.
+    ///
+    /// `NSRunningApplication.activate()` would be the obvious call, but since macOS 14
+    /// an app can only hand focus to another app while it's active itself, and ours
+    /// never is. Asking Launch Services to "open" the app always works.
+    func openSpotify() {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: SpotifyScript.bundleID) else { return }
-        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration)
     }
 
     func openAutomationSettings() {
@@ -98,12 +155,13 @@ final class SpotifyController: NSObject, ObservableObject {
         guard SpotifyScript.isInstalled else { return reset(to: .notInstalled) }
         guard SpotifyScript.isRunning else { return reset(to: .notRunning) }
 
+        let generation = seekGeneration
         Task {
             do {
                 let state = try await script.fetchState()
                 status = .ready
                 isPlaying = state.isPlaying
-                position = state.position
+                if generation == seekGeneration { position = state.position }
                 setTrack(state.track)
                 loadArtwork(state.track?.artworkURL)
                 updatePolling()
@@ -221,9 +279,11 @@ final class SpotifyController: NSObject, ObservableObject {
 
     private func pollPosition() {
         guard status == .ready else { return }
+        let generation = seekGeneration
         Task {
             do {
-                position = try await script.fetchPosition()
+                let seconds = try await script.fetchPosition()
+                if generation == seekGeneration { position = seconds }
             } catch {
                 handle(error)
             }
@@ -237,16 +297,12 @@ final class SpotifyController: NSObject, ObservableObject {
             artwork = nil
             return
         }
-        if let cached = artworkCache.object(forKey: url as NSURL) {
+        if let cached = ImageCache.shared.cachedImage(for: url) {
             artwork = cached
             return
         }
-        artworkTask?.cancel()
-        artworkTask = Task {
-            guard let (data, _) = try? await URLSession.shared.data(from: url),
-                  !Task.isCancelled,
-                  let image = NSImage(data: data) else { return }
-            artworkCache.setObject(image, forKey: url as NSURL)
+        Task {
+            let image = await ImageCache.shared.image(for: url)
             // The track may have changed while we were downloading.
             if track?.artworkURL == url { artwork = image }
         }

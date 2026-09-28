@@ -11,15 +11,26 @@ final class NotchViewModel: ObservableObject {
     }
 }
 
+extension NotchGeometry.State {
+    /// The single source of truth for which state the notch is in. Used by both the
+    /// view (what to draw) and the panel controller (where the hover zone is).
+    @MainActor
+    static func current(isExpanded: Bool, spotify: SpotifyController, queue: QueueController) -> Self {
+        guard isExpanded else { return spotify.isActive ? .collapsed : .idle }
+        guard spotify.track != nil else { return .expanded(.none) }
+        return .expanded(queue.authState == .signedIn ? .list : .prompt)
+    }
+}
+
 /// Root view: a black notch-shaped panel pinned to the top center of the window
 /// that grows from idle → collapsed → expanded.
 struct NotchView: View {
     @ObservedObject var model: NotchViewModel
     @ObservedObject var spotify: SpotifyController
+    @ObservedObject var queue: QueueController
 
     private var state: NotchGeometry.State {
-        if model.isExpanded { return .expanded }
-        return spotify.isActive ? .collapsed : .idle
+        .current(isExpanded: model.isExpanded, spotify: spotify, queue: queue)
     }
 
     var body: some View {
@@ -38,8 +49,8 @@ struct NotchView: View {
             shape.fill(Color.black)
 
             switch state {
-            case .expanded:
-                ExpandedView(spotify: spotify, geometry: geometry)
+            case .expanded(let queueLayout):
+                ExpandedView(spotify: spotify, queue: queue, queueLayout: queueLayout, geometry: geometry)
                     .transition(.opacity.animation(.easeOut(duration: 0.15)))
             case .collapsed:
                 CollapsedView(spotify: spotify, geometry: geometry)
@@ -83,5 +94,22 @@ struct ArtworkView: View {
             }
         }
         .clipShape(shape)
+    }
+}
+
+/// Artwork loaded from a URL through the shared cache (used for queue rows).
+struct RemoteArtworkView: View {
+    let url: URL?
+    var cornerRadius: CGFloat = 4
+    @State private var image: NSImage?
+
+    var body: some View {
+        ArtworkView(image: image, cornerRadius: cornerRadius)
+            // Re-runs whenever `url` changes, and is cancelled if the row goes away.
+            .task(id: url) {
+                guard let url else { image = nil; return }
+                image = ImageCache.shared.cachedImage(for: url)
+                if image == nil { image = await ImageCache.shared.image(for: url) }
+            }
     }
 }

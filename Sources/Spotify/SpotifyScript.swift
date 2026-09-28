@@ -88,6 +88,20 @@ final class SpotifyScript: @unchecked Sendable {
         """
     }
 
+    /// `next track` repeated, with a short pause so Spotify doesn't drop any.
+    private static func skipSource(count: Int) -> String {
+        """
+        if application id "com.spotify.client" is running then
+            tell application id "com.spotify.client"
+                repeat \(count) times
+                    next track
+                    delay 0.15
+                end repeat
+            end tell
+        end if
+        """
+    }
+
     // MARK: Public API
 
     func fetchState() async throws -> PlayerState {
@@ -123,20 +137,36 @@ final class SpotifyScript: @unchecked Sendable {
         _ = try await run(Self.commandSource(command))
     }
 
+    func skip(count: Int) async throws {
+        _ = try await run(Self.skipSource(count: count))
+    }
+
+    func seek(to seconds: TimeInterval) async throws {
+        // String(format:) always uses "." as the decimal separator, which is what
+        // AppleScript expects regardless of the user's locale.
+        let source = """
+        if application id "com.spotify.client" is running then
+            tell application id "com.spotify.client" to set player position to \(String(format: "%.2f", max(0, seconds)))
+        end if
+        """
+        // Every seek has a different source, so don't keep the compiled script.
+        _ = try await run(source, cache: false)
+    }
+
     // MARK: Execution
 
     private let queue = DispatchQueue(label: "com.bilguun.NotchPlayer.SpotifyScript")
     /// Compiled scripts, keyed by source. Only touched on `queue`.
     private var compiled: [String: NSAppleScript] = [:]
 
-    private func run(_ source: String) async throws -> NSAppleEventDescriptor {
+    private func run(_ source: String, cache: Bool = true) async throws -> NSAppleEventDescriptor {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
                 let script: NSAppleScript
                 if let cached = compiled[source] {
                     script = cached
                 } else if let fresh = NSAppleScript(source: source) {
-                    compiled[source] = fresh
+                    if cache { compiled[source] = fresh }
                     script = fresh
                 } else {
                     continuation.resume(throwing: ScriptError.failed(code: 0, message: "Invalid script"))

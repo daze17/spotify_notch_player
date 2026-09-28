@@ -17,13 +17,16 @@ struct NotchPlayerApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: NotchPanelController?
     private var spotify: SpotifyController?
+    private var queue: QueueController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // No Dock icon or menu bar. LSUIElement already does this at launch; setting it
         // here as well makes the intent explicit.
         NSApp.setActivationPolicy(.accessory)
         let spotify = SpotifyController()
+        let queue = QueueController(spotify: spotify)
         self.spotify = spotify
-        panelController = NotchPanelController(spotify: spotify)
+        self.queue = queue
+        panelController = NotchPanelController(spotify: spotify, queue: queue)
     }
 }

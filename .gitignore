@@ -7,3 +7,6 @@ NotchPlayer.xcodeproj/
 build/
 DerivedData/
 xcuserdata/
+
+# Personal build settings (Spotify Client ID)
+Config/Local.xcconfig
