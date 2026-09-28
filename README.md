@@ -1,5 +1,8 @@
 # NotchPlayer
 
+<img width="645" height="395" alt="image" src="https://github.com/user-attachments/assets/2540c7af-206c-45f2-a3c8-559902640ec6" />
+
+
 A macOS notch widget for Spotify, in the style of the iPhone's Dynamic Island. When
 collapsed it stays within the menu bar: artwork and the song title on the left of the
 notch, the artist and animated equalizer bars on the right. Hover and it expands
