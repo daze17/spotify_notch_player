@@ -141,18 +141,26 @@ final class NotchPanelController {
     }
 
     private func installMouseMonitors() {
-        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
-        // Global monitors see events headed to *other* apps, which is every event
-        // while our panel is click-through. Mouse events don't need Accessibility
-        // permission (only key events do). The handler isn't guaranteed to run on
-        // the main actor, so hop there explicitly.
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
-            Task { @MainActor in self?.updateHover() }
+        let mask: NSEvent.EventTypeMask = [
+            .mouseMoved, .leftMouseDragged, .rightMouseDragged,
+            .leftMouseDown, .rightMouseDown,
+        ]
+        // Global monitors see events headed to *other* apps: every move while our
+        // panel is click-through, and every click outside it (which closes the
+        // expanded player). Mouse events don't need Accessibility permission (only
+        // key events do). The handler isn't guaranteed to run on the main actor,
+        // so hop there explicitly.
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            let isClick = event.type == .leftMouseDown || event.type == .rightMouseDown
+            Task { @MainActor in
+                if isClick { self?.clickedOutside() } else { self?.updateHover() }
+            }
         }) {
             eventMonitors.append(global)
         }
         // Local monitors see events delivered to our own app (panel under the cursor).
-        if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+        if let local = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged],
+                                                        handler: { [weak self] event in
             MainActor.assumeIsolated { self?.updateHover() }
             return event
         }) {
@@ -161,17 +169,24 @@ final class NotchPanelController {
     }
 
     private var currentState: NotchGeometry.State {
-        // The hover target is the bare notch when idle, the notch plus wings and
-        // title strip when collapsed, or the whole player when expanded.
         .current(isExpanded: model.isExpanded, spotify: spotify, queue: queue)
     }
 
-    /// Compare the cursor with the visible shape and expand/collapse accordingly.
+    /// The visible shape on screen. Inflated a little: at the very top edge the
+    /// cursor's y can equal maxY, which NSRect.contains treats as outside.
+    private var hotZone: NSRect {
+        model.geometry.shapeFrame(currentState).insetBy(dx: -2, dy: -2)
+    }
+
+    // MARK: Interaction
+    //
+    //   pointer enters shape → expand
+    //   pointer leaves       → collapse after 300 ms (moving back in cancels)
+    //   click elsewhere      → collapse immediately
+
+    /// Called on every mouse move; decides click-through, expanding and the leave timer.
     private func updateHover() {
         // NSEvent.mouseLocation is in global screen coordinates, same as NotchGeometry.
-        // Inflate a little: at the very top edge the cursor's y can equal maxY,
-        // which NSRect.contains treats as outside.
-        let hotZone = model.geometry.shapeFrame(currentState).insetBy(dx: -2, dy: -2)
         let inside = hotZone.contains(NSEvent.mouseLocation)
 
         // Mid-drag (e.g. scrubbing past the edge of the shape), keep the panel as
@@ -179,18 +194,35 @@ final class NotchPanelController {
         let isDragging = NSEvent.pressedMouseButtons & 1 != 0
         if !inside, isDragging, !panel.ignoresMouseEvents { return }
 
+        // Accept clicks only over the visible shape; everywhere else passes through.
         panel.ignoresMouseEvents = !inside
+
         if inside {
-            collapseTask?.cancel()
-            collapseTask = nil
+            cancelScheduledCollapse()
             if !model.isExpanded { model.isExpanded = true }
         } else if model.isExpanded, collapseTask == nil {
             collapseTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(300))
-                guard !Task.isCancelled, let self else { return }
-                self.model.isExpanded = false
-                self.collapseTask = nil
+                guard !Task.isCancelled else { return }
+                self?.collapse()
             }
         }
+    }
+
+    /// A click went to another app. Our panel is click-through outside the shape,
+    /// so that includes clicks on the transparent parts of our own window.
+    private func clickedOutside() {
+        guard model.isExpanded, !hotZone.contains(NSEvent.mouseLocation) else { return }
+        collapse()
+    }
+
+    private func collapse() {
+        cancelScheduledCollapse()
+        model.isExpanded = false
+    }
+
+    private func cancelScheduledCollapse() {
+        collapseTask?.cancel()
+        collapseTask = nil
     }
 }

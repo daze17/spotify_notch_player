@@ -8,7 +8,7 @@ import AppKit
 struct NotchGeometry: Equatable {
     enum State: Equatable {
         case idle                   // nothing playing: exactly the notch, so it's invisible
-        case collapsed              // notch + wings (artwork, equalizer) + title strip below
+        case collapsed              // notch + wings: artwork & title left, artist & equalizer right
         case expanded(QueueLayout)  // hovered: the full player, plus the queue section
     }
 
@@ -67,16 +67,14 @@ struct NotchGeometry: Equatable {
 
     // MARK: Sizes
 
-    /// Width added on each side of the notch in the collapsed state.
-    var wingWidth: CGFloat { notchSize.height + 10 }
+    /// Width added on each side of the notch in the collapsed state. With a notch
+    /// the wings hold the title and artist, so they're wide; the fallback pill shows
+    /// the title in its middle and only needs room for the artwork and equalizer.
+    var wingWidth: CGFloat { hasNotch ? 130 : notchSize.height + 10 }
 
     /// Vertical space at the top of the expanded shape that is hidden behind the
     /// physical notch, so content must start below it.
     var contentTopInset: CGFloat { hasNotch ? notchSize.height : 0 }
-
-    /// Height of the "Title — Artist" strip under the notch when collapsed. Without
-    /// a notch the title fits in the middle of the pill instead, so there's no strip.
-    var titleStripHeight: CGFloat { hasNotch ? 22 : 0 }
 
     /// Height of the player part of the expanded view (below the notch inset).
     static let playerHeight: CGFloat = 150
@@ -94,10 +92,10 @@ struct NotchGeometry: Equatable {
         case .idle:
             return notchSize
         case .collapsed:
-            return CGSize(width: notchSize.width + wingWidth * 2, height: notchSize.height + titleStripHeight)
+            return CGSize(width: notchSize.width + wingWidth * 2, height: notchSize.height)
         case .expanded(let queue):
             let collapsedWidth = notchSize.width + wingWidth * 2
-            return CGSize(width: max(collapsedWidth + 40, 380),
+            return CGSize(width: max(collapsedWidth, 400),
                           height: contentTopInset + Self.playerHeight + queueHeight(queue))
         }
     }
@@ -107,14 +105,13 @@ struct NotchGeometry: Equatable {
     func cornerRadii(_ state: State) -> (top: CGFloat, bottom: CGFloat) {
         let bottom: CGFloat
         switch state {
-        case .idle: bottom = hasNotch ? 10 : notchSize.height / 2
-        case .collapsed: bottom = hasNotch ? 14 : notchSize.height / 2
+        case .idle, .collapsed: bottom = hasNotch ? 10 : notchSize.height / 2
         case .expanded: bottom = 28
         }
         return (hasNotch ? 0 : bottom, bottom)
     }
 
-    /// The shape's rect on screen. Used for hover hit-testing.
+    /// The shape's rect on screen. Used for hover and click hit-testing.
     func shapeFrame(_ state: State) -> NSRect {
         let size = shapeSize(state)
         return NSRect(x: centerX - size.width / 2, y: topY - size.height, width: size.width, height: size.height)

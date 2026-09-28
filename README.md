@@ -1,10 +1,12 @@
 # NotchPlayer
 
-A macOS notch widget for Spotify. When collapsed, the album art sits to the left of the
-notch, animated equalizer bars sit to the right, and a scrolling "Title — Artist"
-strip runs under the notch. Hover over the notch and it expands downward to show
-artwork, title, artist, progress, prev / play-pause / next controls and the
-**Up next** queue. On Macs without a notch it floats as a pill below the menu bar.
+A macOS notch widget for Spotify, in the style of the iPhone's Dynamic Island. When
+collapsed it stays within the menu bar: artwork and the song title on the left of the
+notch, the artist and animated equalizer bars on the right. Hover and it expands
+downward to show artwork, title, artist, a seekable progress bar, prev / play-pause /
+next controls and the **Up next** queue. Move the pointer away, or click anywhere
+else, to close it. On Macs
+without a notch it floats as a pill below the menu bar.
 
 Requires macOS 14+, Xcode 15+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
