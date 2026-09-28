@@ -1,0 +1,48 @@
+name: NotchPlayer
+
+options:
+  bundleIdPrefix: com.bilguun
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    # Swift 5 language mode (compiled by the Swift 6 toolchain) keeps concurrency
+    # checking relaxed while the app is small. Bump to "6.0" to opt into strict checking.
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+targets:
+  NotchPlayer:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bilguun.NotchPlayer
+        PRODUCT_NAME: NotchPlayer
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Sources/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/Resources/NotchPlayer.entitlements
+        # Developer ID distribution: no App Sandbox, but Hardened Runtime is required
+        # for notarization. Apple events then need the automation entitlement.
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        # Ad-hoc ("Sign to Run Locally") by default so the project builds without a
+        # team. Override with `make build TEAM=XXXXXXXXXX` for a stable identity.
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        # Xcode silently drops Hardened Runtime for ad-hoc signatures; force it so
+        # local builds hit the same Apple-event rules as a Developer ID build.
+        OTHER_CODE_SIGN_FLAGS: "--options=runtime"
+        # Xcode 16+ splits Debug builds into a stub + NotchPlayer.debug.dylib. Under
+        # Hardened Runtime library validation, an ad-hoc dylib can be refused, so keep
+        # everything in one binary.
+        ENABLE_DEBUG_DYLIB: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        DEAD_CODE_STRIPPING: YES
