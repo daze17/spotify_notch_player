@@ -1,5 +1,10 @@
 # NotchPlayer
 
+
+### minimized
+<img width="644" height="107" alt="image" src="https://github.com/user-attachments/assets/4eff63e9-7c95-4562-868e-09ee237561c6" />
+
+### expanded
 <img width="645" height="395" alt="image" src="https://github.com/user-attachments/assets/2540c7af-206c-45f2-a3c8-559902640ec6" />
 
 
